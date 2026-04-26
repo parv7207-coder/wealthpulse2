@@ -545,15 +545,56 @@ let S={
 
 /* ========== UTILS ========== */
 function fmt(n){if(!n&&n!==0)return '₹0';return '₹'+Math.round(n).toLocaleString('en-IN')}
-function pct(part,total){if(!total||total===0)return 0;return Math.max(0,Math.min(100,Math.round((part/total)*100)))}
-function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+function pct(part,total){if(!total)return 0;return Math.max(0,Math.min(100,Math.round((part/total)*100)))}
+function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v))}
+function el(id){return document.getElementById(id)}
+
+/* ========== PERSISTENCE (localStorage) ========== */
+function saveState(){
+  try{
+    const copy=JSON.parse(JSON.stringify(S));
+    delete copy.aiTipsCache;
+    delete copy.aiTipsCacheKey;
+    localStorage.setItem('wealthpulse_v1',JSON.stringify(copy));
+  }catch(e){console.warn('Save failed',e)}
+}
+
+function loadState(){
+  try{
+    const raw=localStorage.getItem('wealthpulse_v1');
+    if(!raw) return;
+    const parsed=JSON.parse(raw);
+    Object.assign(S,parsed);
+    // ensure sliders is an object with numeric values
+    if(Array.isArray(S.sliders)){
+      const tmp={};S.sliders.forEach((v,i)=>tmp[i]=v);S.sliders=tmp;
+    }
+    // populate input fields from restored state
+    const setVal=(id,v)=>{const e=el(id);if(e)e.value=v;};
+    setVal('gross-salary',S.salary||'');
+    setVal('tax-bracket',S.taxPct||15);
+    setVal('pf-pct',S.pfPct||12);
+    setVal('other-deduct',S.otherDeduct||0);
+    setVal('custom-pct',S.strategyPct||0);
+    const lbl=el('custom-pct-label');if(lbl)lbl.textContent=(S.strategyPct||0)+'%';
+    // restore strategy selection
+    document.querySelectorAll('.strategy').forEach(s=>{
+      if((s.getAttribute('onclick')||'').includes("'"+S.strategyName+"'"))
+        selectStrategy(s,S.strategyName,S.strategyPct||0);
+    });
+  }catch(e){console.warn('Load failed',e)}
+}
+
+// auto-save on tab close / refresh
+window.addEventListener('beforeunload',saveState);
 
 /* ========== TABS ========== */
-function showTab(id,el){
+function showTab(id,btn){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
-  if(el)el.classList.add('active');
+  if(btn)btn.classList.add('active');
+  localStorage.setItem('wp_active_tab',id);
   if(id==='dashboard')refreshDashboard();
   if(id==='invest')refreshInvestPanel();
   if(id==='quarterly')refreshQuarterly();
@@ -563,33 +604,34 @@ function showTab(id,el){
 
 /* ========== SALARY ========== */
 function calcTakeHome(){
-  const gross=parseFloat(document.getElementById('gross-salary').value)||0;
-  const tax=parseFloat(document.getElementById('tax-bracket').value)||0;
-  const pf=parseFloat(document.getElementById('pf-pct').value)||0;
-  const other=parseFloat(document.getElementById('other-deduct').value)||0;
+  const gross=parseFloat(el('gross-salary').value)||0;
+  const tax=parseFloat(el('tax-bracket').value)||0;
+  const pf=parseFloat(el('pf-pct').value)||0;
+  const other=parseFloat(el('other-deduct').value)||0;
   const taxAmt=gross*(tax/100);
   const pfAmt=gross*(pf/100);
   const takehome=Math.max(0,gross-taxAmt-pfAmt-other);
-  document.getElementById('br-gross').textContent=fmt(gross);
-  document.getElementById('br-tax').textContent='−'+fmt(taxAmt);
-  document.getElementById('br-tax-pct').textContent=tax+'%';
-  document.getElementById('br-pf').textContent='−'+fmt(pfAmt);
-  document.getElementById('br-pf-pct').textContent=pf+'%';
-  document.getElementById('br-other').textContent='−'+fmt(other);
-  document.getElementById('br-takehome').textContent=fmt(takehome);
+  el('br-gross').textContent=fmt(gross);
+  el('br-tax').textContent='−'+fmt(taxAmt);
+  el('br-tax-pct').textContent=tax+'%';
+  el('br-pf').textContent='−'+fmt(pfAmt);
+  el('br-pf-pct').textContent=pf+'%';
+  el('br-other').textContent='−'+fmt(other);
+  el('br-takehome').textContent=fmt(takehome);
   return takehome;
 }
 
 function saveSalary(){
-  const gross=parseFloat(document.getElementById('gross-salary').value)||0;
+  const gross=parseFloat(el('gross-salary').value)||0;
   if(!gross){alert('Please enter your gross salary.');return;}
   S.salary=gross;
-  S.taxPct=parseFloat(document.getElementById('tax-bracket').value)||0;
-  S.pfPct=parseFloat(document.getElementById('pf-pct').value)||0;
-  S.otherDeduct=parseFloat(document.getElementById('other-deduct').value)||0;
+  S.taxPct=parseFloat(el('tax-bracket').value)||0;
+  S.pfPct=parseFloat(el('pf-pct').value)||0;
+  S.otherDeduct=parseFloat(el('other-deduct').value)||0;
   S.takehome=calcTakeHome();
-  S.aiTipsCache=null; // invalidate cache
+  S.aiTipsCache=null;
   refreshDashboard();refreshInvestPanel();refreshQuarterly();
+  saveState();
   alert('✅ Salary saved successfully!');
 }
 
@@ -608,12 +650,14 @@ function addExpense(){
   document.getElementById('exp-amount').value='';
   S.aiTipsCache=null;
   renderExpenses();refreshDashboard();refreshQuarterly();
+  saveState();
 }
 
 function removeExpense(id){
   S.expenses=S.expenses.filter(e=>e.id!==id);
   S.aiTipsCache=null;
   renderExpenses();refreshDashboard();refreshQuarterly();
+  saveState();
 }
 
 function renderExpenses(){
@@ -669,6 +713,7 @@ function updateCustomPct(){
   document.getElementById('custom-pct-label').textContent=v+'%';
   S.aiTipsCache=null;
   refreshInvestPanel();refreshDashboard();
+  saveState();
 }
 
 function refreshInvestPanel(){
@@ -690,6 +735,7 @@ function updateSlider(idx,val){
   const investAmt=S.takehome*(S.strategyPct/100);
   document.getElementById('slider-val-'+idx).textContent=val+'% — '+fmt(investAmt*S.sliders[idx]/100);
   renderInvestSummary(investAmt);
+  saveState();
 }
 
 function renderInvestSummary(investAmt){
@@ -716,6 +762,7 @@ function saveStrategy(){
   S.allocations=S.allocations.map((a,i)=>({...a,pct:S.sliders[i]}));
   S.aiTipsCache=null;
   refreshDashboard();refreshQuarterly();
+  saveState();
   alert('✅ Investment plan saved!');
 }
 
@@ -727,27 +774,28 @@ function refreshDashboard(){
   const freeCash=S.takehome-totalExp-investAmt;
   const freeCashDisplay=Math.max(0,freeCash);
 
-  document.getElementById('d-salary').textContent=fmt(S.takehome);
-  document.getElementById('d-expenses').textContent=fmt(totalExp);
-  document.getElementById('d-invest').textContent=fmt(investAmt);
-  document.getElementById('d-savings').textContent=fmt(freeCashDisplay);
+  el('d-salary').textContent=fmt(S.takehome);
+  el('d-expenses').textContent=fmt(totalExp);
+  el('d-invest').textContent=fmt(investAmt);
+  el('d-savings').textContent=fmt(freeCashDisplay);
 
   const ep=pct(totalExp,S.takehome);
   const ip=pct(investAmt,S.takehome);
+  // sp is derived from actual freeCash (not the clamped display value)
+  // so sp can only be 0 when overspending, which is correct for health
   const sp=pct(freeCashDisplay,S.takehome);
-  const totalPct=ep+ip+sp;
 
-  document.getElementById('pct-exp').textContent=ep+'%';
-  document.getElementById('pct-inv').textContent=ip+'%';
-  document.getElementById('pct-sav').textContent=sp+'%';
-  document.getElementById('bar-exp').style.width=clamp(ep,0,100)+'%';
-  document.getElementById('bar-inv').style.width=clamp(ip,0,100)+'%';
-  document.getElementById('bar-sav').style.width=clamp(sp,0,100)+'%';
-  document.getElementById('total-allocated-pct').textContent=(ep+ip+sp)+'%';
+  el('pct-exp').textContent=ep+'%';
+  el('pct-inv').textContent=ip+'%';
+  el('pct-sav').textContent=sp+'%';
+  el('bar-exp').style.width=clamp(ep,0,100)+'%';
+  el('bar-inv').style.width=clamp(ip,0,100)+'%';
+  el('bar-sav').style.width=clamp(sp,0,100)+'%';
+  el('total-allocated-pct').textContent=(ep+ip+sp)+'%';
 
-  document.getElementById('leg-exp').textContent='Expenses — '+fmt(totalExp);
-  document.getElementById('leg-inv').textContent='Investments — '+fmt(investAmt);
-  document.getElementById('leg-sav').textContent='Free Cash — '+fmt(freeCashDisplay);
+  el('leg-exp').textContent='Expenses — '+fmt(totalExp);
+  el('leg-inv').textContent='Investments — '+fmt(investAmt);
+  el('leg-sav').textContent='Free Cash — '+fmt(freeCashDisplay);
 
   drawDonut(totalExp,investAmt,freeCashDisplay);
   calcHealth(ep,ip,sp,freeCash);
@@ -758,7 +806,7 @@ function refreshDashboard(){
   if(S.takehome&&ep>70)notifs+='<div class="notif danger">🚨 Expenses consume <strong>'+ep+'%</strong> of income — aim to keep under 60–70%.</div>';
   if(S.takehome&&freeCash<0)notifs+='<div class="notif danger">❌ You are <strong>overspending by '+fmt(Math.abs(freeCash))+'</strong> — expenses + investments exceed take-home salary!</div>';
   if(S.takehome&&ip<10&&ip>0)notifs+='<div class="notif warn">📈 Investing only <strong>'+ip+'%</strong> of income. Consider targeting 20% for meaningful wealth building.</div>';
-  document.getElementById('dash-notifs').innerHTML=notifs;
+  el('dash-notifs').innerHTML=notifs;
 }
 
 /* ========== DONUT ========== */
@@ -843,12 +891,13 @@ function calcHealth(ep,ip,sp,freeCash){
 
   const total=iScore+eScore+sScore;
 
-  document.getElementById('sub-invest-score').textContent=iScore;
-  document.getElementById('sub-expense-score').textContent=eScore;
-  document.getElementById('sub-savings-score').textContent=sScore;
-  document.getElementById('sub-invest-score').style.color=iScore>=28?'var(--green)':iScore>=14?'var(--gold)':'var(--danger)';
-  document.getElementById('sub-expense-score').style.color=eScore>=28?'var(--green)':eScore>=14?'var(--gold)':'var(--danger)';
-  document.getElementById('sub-savings-score').style.color=sScore>=14?'var(--green)':sScore>=7?'var(--gold)':'var(--danger)';
+  const setSubScore=(id,score,hi,mid)=>{
+    const e=el(id);e.textContent=score;
+    e.style.color=score>=hi?'var(--green)':score>=mid?'var(--gold)':'var(--danger)';
+  };
+  setSubScore('sub-invest-score',iScore,28,14);
+  setSubScore('sub-expense-score',eScore,28,14);
+  setSubScore('sub-savings-score',sScore,14,7);
 
   const barColor=total>=80?'linear-gradient(90deg,var(--green),#52d68a)':total>=60?'linear-gradient(90deg,var(--gold),#e8a84a)':total>=40?'linear-gradient(90deg,#f7a56a,var(--gold))':'linear-gradient(90deg,var(--danger),#e87060)';
   document.getElementById('health-bar-fill').style.width=total+'%';
@@ -888,11 +937,11 @@ function refreshQuarterly(){
   const freeCash=Math.max(0,S.takehome-totalExp-investAmt);
   const qInvest=investAmt*3;
 
-  ['q1-save','q2-save','q3-save','q4-save'].forEach(id=>{document.getElementById(id).textContent=fmt(qInvest);});
-  document.getElementById('yr-income').textContent=fmt(S.takehome*12);
-  document.getElementById('yr-expenses').textContent=fmt(totalExp*12);
-  document.getElementById('yr-invest').textContent=fmt(investAmt*12);
-  document.getElementById('yr-savings').textContent=fmt(freeCash*12);
+  ['q1-save','q2-save','q3-save','q4-save'].forEach(id=>{el(id).textContent=fmt(qInvest);});
+  el('yr-income').textContent=fmt(S.takehome*12);
+  el('yr-expenses').textContent=fmt(totalExp*12);
+  el('yr-invest').textContent=fmt(investAmt*12);
+  el('yr-savings').textContent=fmt(freeCash*12);
 
   // 3-year SIP growth with monthly compounding at 12% p.a.
   let growth='';
@@ -1094,10 +1143,21 @@ function renderLearn(){
 }
 
 /* ========== INIT ========== */
+loadState();
 calcTakeHome();
+renderExpenses();
 refreshDashboard();
 refreshInvestPanel();
+refreshQuarterly();
 drawDonut(0,0,0);
+// restore last active tab
+(function(){
+  const savedTab=localStorage.getItem('wp_active_tab')||'dashboard';
+  const validTabs=['dashboard','salary','expenses','invest','quarterly','tips','learn'];
+  const tabId=validTabs.includes(savedTab)?savedTab:'dashboard';
+  const matchBtn=Array.from(document.querySelectorAll('.tab-btn')).find(b=>(b.getAttribute('onclick')||'').includes("'"+tabId+"'"));
+  showTab(tabId,matchBtn||null);
+})();
 </script>
 </body>
 </html>
